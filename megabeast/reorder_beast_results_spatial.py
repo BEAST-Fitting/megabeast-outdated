@@ -16,10 +16,13 @@ import os
 import glob
 import math
 
+from tqdm import trange, tqdm
+
 import argparse
 import numpy as np
 
 from astropy import wcs
+from astropy.io import fits
 from astropy.table import Table
 
 def setup_spatial_regions(cat_filename,
@@ -134,7 +137,8 @@ if __name__ == '__main__':
     # commandline parser
     parser = argparse.ArgumentParser()
     parser.add_argument("-b","--bricknum", 
-                        help="PHAT brick num shortcut")
+                        help="PHAT brick num shortcut" + \
+                        " (superceeds other inputs)")
     parser.add_argument("-s","--stats_filename", 
                         help="Filename of the full run stats")
     parser.add_argument("-r","--region_filebase", 
@@ -175,9 +179,25 @@ if __name__ == '__main__':
     #      append the nD pdfs
     #      append the completeness function (??)
 
-    for cur_file in sub_files:
+    for cur_file in tqdm(sub_files, desc="orig sub files"):
         # read in the stats file
         cur_cat = Table.read(cur_file)
+        n_objs = len(cur_cat)
+
+        # read in the pdf1d file
+        #   a number of extensions, one for each entry in the stats file
+        hdulist = fits.open(cur_file.replace('_stats.fits','_pdf1d.fits'))
+        cur_pdf1d_vals = []
+        cur_pdf1d_name = []
+        n_qnames = len(hdulist) - 1
+        for k in range(n_qnames):
+            cur_pdf1d_name.append(hdulist[k+1].header['EXTNAME'])
+            cur_pdf1d_vals.append(hdulist[k+1].data)
+        hdulist.close()
+
+        # get the source density and subregion tag
+        # allows for unique filenames for the spatial regions for output
+        orig_reg_tag = cur_file[cur_file.find('_sd'):cur_file.find('_stats')]
         
         # determine the subregions for all the objects
         xy_vals = regions_for_objects(cur_cat['RA'],
@@ -189,26 +209,46 @@ if __name__ == '__main__':
         uniq_xy_names, rindxs = np.unique(xy_names, 
                                           return_inverse=True)
 
+        uniq_xy_names = uniq_xy_names[0:10]
+
         # loop over the unique xy regions
-        for k, uxy_name in enumerate(uniq_xy_names):
+        for k in trange(len(uniq_xy_names), desc="outputing " + orig_reg_tag, 
+                        leave=False):
+            uxy_name = uniq_xy_names[k]
 
             # get the indexes for the objects in this region
             indxs, = np.where(rindxs == k)
-            print(uxy_name, len(indxs), xy_names[indxs])
 
             # create region directory if it does not exist
             reg_dir = out_filebase + '_' + uxy_name
             if not os.path.exists(reg_dir):
                 os.makedirs(reg_dir)
 
+            # base filename for output
+            reg_filebase = out_filebase + '_' + uxy_name + '/' + \
+                uxy_name + orig_reg_tag
+
             # write the stats info
-            reg_stats_file = out_filebase + '_' + uxy_name + '_stats.fits'
-            print(reg_stats_file)
-            #cur_cat_region = cur_cat[indxs]
-            cur_cat[indxs].write(reg_stats_file)
-            #cur_cat_region.write(reg_stats_file)
+            reg_stats_file = reg_filebase + '_stats.fits'
+            cur_cat[indxs].write(reg_stats_file, overwrite=True)
 
-            if k > 10:
-                exit()
+            # write the pdf1d info
+            reg_pdf1d_file = reg_filebase + '_pdf1d.fits'
 
-        exit()
+            # setup the primary header and hdulist
+            hdulist = fits.HDUList([fits.PrimaryHDU()])
+
+            # generate the extensions
+            for k, qname in enumerate(cur_pdf1d_name):
+                # get the 1D PDFs for the cur objects 
+                #   plus the last column giving the values of the bins
+                cur_reg_pdf1d = cur_pdf1d_vals[k][np.append(indxs,n_objs),:]
+
+                chdu = fits.PrimaryHDU(cur_reg_pdf1d)
+                chdu.header.set('XTENSION','IMAGE') 
+                chdu.header.set('EXTNAME',qname) 
+
+                hdulist.append(chdu)
+
+            # write the 1D PDFs
+            hdulist.writeto(reg_pdf1d_file, clobber=True)
