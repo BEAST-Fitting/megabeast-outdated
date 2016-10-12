@@ -55,14 +55,95 @@ def condense_stats_files(bname,
     # output the full pixel catalog
     full_cat.write(out_dir+'/' + bname + '_stats.fits', overwrite=True)
 
+    # return the number of sources in the catalog for later use
+    return len(full_cat)
+
 def condense_pdf1d_files(bname,
                          cur_dir,
-                         out_dir):
+                         out_dir,
+                         n_sources):
 
     # get all the files
     pdf1d_files = glob.glob(cur_dir + '*_pdf1d.fits')
 
+    # loop over the pdf1d files, accumulating the condensed 2D format 1d pdfs
+    init_condensed = False
+    cond_pdf1d_vals = []
+    cond_pdf1d_name = []
+    for cur_pdf1d in pdf1d_files:
 
+        hdulist = fits.open(cur_pdf1d)
+        n_qnames = len(hdulist) - 1
+        for k in range(n_qnames):
+            pdf1d_histo = hdulist[k+1].data
+            n_cur_source, n_bins = pdf1d_histo.shape
+            n_cur_source -= 1
+
+            # initialize condensed versions
+            if not init_condensed:
+                pos_source = 0
+                cond_pdf1d_vals.append(np.empty((n_sources+1, n_bins),
+                                                dtype=float))
+                cond_pdf1d_name.append(hdulist[k+1].header['EXTNAME'])
+
+                # copy in the bin values to the last column
+                cond_pdf1d_vals[k][n_sources,:] = pdf1d_histo[-1,:]
+
+            # insert the 1d pdfs into the 2D format structure
+            print(k, len(cond_pdf1d_vals))
+            cond_pdf1d_vals[k][pos_source:pos_source+n_cur_source,:] = \
+                pdf1d_histo[0:-1,:]
+        
+        pos_source += n_cur_source
+        init_condensed = True
+
+    # output the condensed 2D format 1D pdfs
+    hdulist = fits.HDUList([fits.PrimaryHDU()])
+
+    # generate the extensions
+    for k, qname in enumerate(cond_pdf1d_name):
+        chdu = fits.PrimaryHDU(cond_pdf1d_vals[k])
+        chdu.header.set('XTENSION','IMAGE') 
+        chdu.header.set('EXTNAME',qname) 
+        
+        hdulist.append(chdu)
+
+    # write the 1D PDFs
+    hdulist.writeto(out_dir+'/'+bname+'_pdf1d.fits', clobber=True)
+
+def condense_lnp_files(bname,
+                       cur_dir,
+                       out_dir):
+
+    # get all the files
+    lnp_files = glob.glob(cur_dir + '*_lnp.hd5')
+
+    # open the condensed hd5 file for writing
+    #   remove it if it already exisits (h5py does not overwrite)
+    clfile = out_dir+'/'+bname+'_lnp.hd5'
+    try:
+        os.remove(clfile)
+    except OSError:
+        pass
+
+    cond_lnp_file = h5py.File(clfile)
+
+    # loop over the small lnp files and copy to main lnp file
+    k = 0
+    for cur_lnp in lnp_files:
+        cur_lnpfile = h5py.File(cur_lnp, 'r')
+        
+        # loop over all the stars (groups)
+        for sname in cur_lnpfile.keys():
+            star_group = cond_lnp_file.create_group('star_%d' % k)
+            for cp_name, cp_value in cur_lnpfile[sname].items():
+                star_group.create_dataset(cp_name,data=cp_value.value)
+
+            k += 1
+
+        cur_lnpfile.close()
+
+    cond_lnp_file.close()
 
 if __name__ == '__main__':
 
@@ -90,16 +171,21 @@ if __name__ == '__main__':
 
     # get the list of directories
     #    each directory is a different pixel
-    pix_dirs = glob.glob(out_dir + '/*/')
+    pix_dirs = sorted(glob.glob(out_dir + '/*/'))
+    pix_dirs = pix_dirs[0:10]
 
     # loop over each subdirectory and condense the files as appropriate
     for cur_dir in tqdm(pix_dirs, desc='spatial regions'):
+        print(cur_dir)
+
         # get the base name
         bname = cur_dir[cur_dir.find('spatial/')+8:-1]
 
         # process that catalog (stats) files
-        condense_stats_files(bname, cur_dir, out_dir)
+        n_sources = condense_stats_files(bname, cur_dir, out_dir)
 
         # process the pdf1d files
-        condense_pdf1d_files(bname, cur_dir, out_dir)
+        condense_pdf1d_files(bname, cur_dir, out_dir, n_sources)
 
+        # process the nD lnp files
+        condense_lnp_files(bname, cur_dir, out_dir)

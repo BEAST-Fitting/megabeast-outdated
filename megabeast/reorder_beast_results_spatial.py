@@ -218,7 +218,7 @@ if __name__ == '__main__':
         uniq_xy_names, rindxs = np.unique(xy_names, 
                                           return_inverse=True)
 
-        uniq_xy_names = uniq_xy_names[0:5]
+        #uniq_xy_names = uniq_xy_names[0:5]
 
         # loop over the unique xy regions
         for k in trange(len(uniq_xy_names), desc="outputing " + orig_reg_tag, 
@@ -229,8 +229,8 @@ if __name__ == '__main__':
             indxs, = np.where(rindxs == k)
 
             # add the number of stars found to summary array
-            wcs_nstars[xy_vals['x'][indxs[0]], 
-                       xy_vals['y'][indxs[0]]] += len(indxs)
+            wcs_nstars[xy_vals['y'][indxs[0]], 
+                       xy_vals['x'][indxs[0]]] += len(indxs)
 
             # create region directory if it does not exist
             reg_dir = out_filebase + '_' + uxy_name
@@ -283,9 +283,10 @@ if __name__ == '__main__':
 
         cur_lnpfile.close()
 
-    # Now, write out the WCS info and number of stars per pixel to file
-    header = wcs_info.to_header()
-    hdu = fits.PrimaryHDU(wcs_nstars, header=header)
+        # Now, write out the WCS info and number of stars per pixel to file
+        #   do every subregion file to have an on-the-fly check
+        header = wcs_info.to_header()
+        hdu = fits.PrimaryHDU(wcs_nstars, header=header)
 
-    # Save to FITS file
-    hdu.writeto(out_filebase+'_nstars.fits', clobber=True)
+        # Save to FITS file
+        hdu.writeto(out_filebase+'_nstars.fits', clobber=True)
