@@ -16,6 +16,8 @@ import os
 import glob
 import math
 
+#import tables
+import h5py
 from tqdm import trange, tqdm
 
 import argparse
@@ -57,9 +59,9 @@ def setup_spatial_regions(cat_filename,
     ra_delt = dec_delt
 
     # compute the number of pixels and 
-    n_y = np.fix(np.round((max_dec - min_dec)/dec_delt))
-    n_x = np.fix(np.round(math.cos(0.5*(max_dec+min_dec)*math.pi/180.)*
-                          (max_ra-min_ra)/ra_delt)) 
+    n_y = int(np.rint((max_dec - min_dec)/dec_delt) + 1)
+    n_x = int(np.rint(math.cos(0.5*(max_dec+min_dec)*math.pi/180.)*
+                      (max_ra-min_ra)/ra_delt) + 1)
 
     # ra delta should be negative
     ra_delt *= -1.
@@ -72,7 +74,7 @@ def setup_spatial_regions(cat_filename,
     w.wcs.crval = np.asarray([(min_ra+max_ra), (min_dec+max_dec)]) / 2.
     w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
 
-    return w
+    return (w, n_x, n_y)
 
 def regions_for_objects(ra,
                         dec,
@@ -167,7 +169,10 @@ if __name__ == '__main__':
         exit()
 
     # read in the full brick catalog and setup the spatial subdivided regions
-    wcs_info = setup_spatial_regions(cat_filename)
+    wcs_info, n_x, n_y = setup_spatial_regions(cat_filename)
+
+    # setup arrary to store number of stars per pixel
+    wcs_nstars = np.zeros((n_y, n_x), dtype=int)
 
     # find all the subdivided BEAST files for this brick
     sub_files = glob.glob(reg_filebase + '*_stats.fits')
@@ -176,9 +181,10 @@ if __name__ == '__main__':
     # in loop:
     #      read in the locations of each star and calculated spatial region
     #      append the 1D pdfs
-    #      append the nD pdfs
+    #      append the sparse nD pdfs
     #      append the completeness function (??)
 
+    #sub_files = sub_files[0:2]
     for cur_file in tqdm(sub_files, desc="orig sub files"):
         # read in the stats file
         cur_cat = Table.read(cur_file)
@@ -195,6 +201,10 @@ if __name__ == '__main__':
             cur_pdf1d_vals.append(hdulist[k+1].data)
         hdulist.close()
 
+        # open the lnp file for reading
+        cur_lnpfile = h5py.File(cur_file.replace('_stats.fits',
+                                                 '_lnp.hd5'), 'r')
+        
         # get the source density and subregion tag
         # allows for unique filenames for the spatial regions for output
         orig_reg_tag = cur_file[cur_file.find('_sd'):cur_file.find('_stats')]
@@ -209,7 +219,7 @@ if __name__ == '__main__':
         uniq_xy_names, rindxs = np.unique(xy_names, 
                                           return_inverse=True)
 
-        uniq_xy_names = uniq_xy_names[0:10]
+        uniq_xy_names = uniq_xy_names[0:5]
 
         # loop over the unique xy regions
         for k in trange(len(uniq_xy_names), desc="outputing " + orig_reg_tag, 
@@ -218,6 +228,10 @@ if __name__ == '__main__':
 
             # get the indexes for the objects in this region
             indxs, = np.where(rindxs == k)
+
+            # add the number of stars found to summary array
+            wcs_nstars[xy_vals['x'][indxs[0]], 
+                       xy_vals['y'][indxs[0]]] += len(indxs)
 
             # create region directory if it does not exist
             reg_dir = out_filebase + '_' + uxy_name
@@ -252,3 +266,27 @@ if __name__ == '__main__':
 
             # write the 1D PDFs
             hdulist.writeto(reg_pdf1d_file, clobber=True)
+
+            # write the nD sparse likelihood info
+            reg_lnp_file = reg_filebase + '_lnp.hd5'
+
+            # open the file (overwrites an existing file)
+            reg_lnpfile = h5py.File(reg_lnp_file, 'w')
+            
+            for i, k in enumerate(indxs):
+                star_group = reg_lnpfile.create_group('star_%d' % i)
+
+                # transfer the information
+                for cp_name, cp_value in cur_lnpfile['star_%d' % k].items():
+                    star_group.create_dataset(cp_name,data=cp_value.value)
+
+            reg_lnpfile.close()
+
+        cur_lnpfile.close()
+
+    # Now, write out the WCS info and number of stars per pixel to file
+    header = wcs_info.to_header()
+    hdu = fits.PrimaryHDU(wcs_nstars, header=header)
+
+    # Save to FITS file
+    hdu.writeto(out_filebase+'_nstars.fits', clobber=True)
