@@ -16,7 +16,6 @@ import os
 import glob
 import math
 
-#import tables
 import h5py
 from tqdm import trange, tqdm
 
