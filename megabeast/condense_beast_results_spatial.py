@@ -90,7 +90,7 @@ def condense_pdf1d_files(bname,
                 cond_pdf1d_vals[k][n_sources,:] = pdf1d_histo[-1,:]
 
             # insert the 1d pdfs into the 2D format structure
-            print(k, len(cond_pdf1d_vals))
+            #print(k, len(cond_pdf1d_vals))
             cond_pdf1d_vals[k][pos_source:pos_source+n_cur_source,:] = \
                 pdf1d_histo[0:-1,:]
         
@@ -172,11 +172,11 @@ if __name__ == '__main__':
     # get the list of directories
     #    each directory is a different pixel
     pix_dirs = sorted(glob.glob(out_dir + '/*/'))
-    pix_dirs = pix_dirs[0:10]
+    #pix_dirs = pix_dirs[0:10]
 
     # loop over each subdirectory and condense the files as appropriate
     for cur_dir in tqdm(pix_dirs, desc='spatial regions'):
-        print(cur_dir)
+        #print(cur_dir)
 
         # get the base name
         bname = cur_dir[cur_dir.find('spatial/')+8:-1]
